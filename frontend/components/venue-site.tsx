@@ -3,6 +3,7 @@
 import Image from 'next/image'
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
+import { apiFetch } from '@/lib/api'
 import {
   ArrowDown,
   ArrowDownRight,
@@ -46,8 +47,8 @@ const amenityItems = [
   ['08', 'Guest security', 'CCTV coverage and trained security staff on site.'],
 ]
 
-type InquiryValues = { date: string; event: string; guests: string; space: string; name: string; phone: string; email: string; note: string; budget: string }
-const initialInquiry: InquiryValues = { date: '', event: '', guests: '250', space: '', name: '', phone: '', email: '', note: '', budget: '' }
+type InquiryValues = { date: string; event: string; guests: string; space: string; name: string; phone: string; contact_preference: string; email: string; note: string; budget: string }
+const initialInquiry: InquiryValues = { date: '', event: '', guests: '250', space: '', name: '', phone: '', contact_preference: 'whatsapp', email: '', note: '', budget: '' }
 
 function SectionIntro({ eyebrow, title, copy, light = false }: { eyebrow: string; title: string; copy?: string; light?: boolean }) {
   return <div className={`section-intro${light ? ' section-intro-light' : ''}`}><span className="eyebrow"><i />{eyebrow}</span><h2>{title}</h2>{copy && <p>{copy}</p>}</div>
@@ -81,25 +82,52 @@ function InquiryModal({ open, onClose, prefill = { date: '', event: '' } }: { op
   const [step, setStep] = useState(1)
   const [values, setValues] = useState(initialInquiry)
   const [error, setError] = useState('')
+  const [availabilityMessage, setAvailabilityMessage] = useState('')
+  const [saving, setSaving] = useState(false)
   const update = (key: keyof InquiryValues, value: string) => setValues((current) => ({ ...current, [key]: value }))
   useEffect(() => {
     setValues((current) => ({ ...current, date: prefill.date, event: prefill.event }))
   }, [prefill.date, prefill.event])
   if (!open) return null
-  const goToDetails = (event: React.FormEvent<HTMLFormElement>) => {
+  const goToDetails = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (!values.date || !values.event || !values.space) { setError('Please add your event date, celebration type and preferred space.'); return }
     setError('')
+    try {
+      const query = new URLSearchParams({ date: values.date, space: values.space })
+      const response = await apiFetch(`/api/availability?${query}`)
+      if (!response.ok) throw new Error('Availability could not be checked.')
+      const result = await response.json() as { status: 'available' | 'unavailable' | 'unknown' }
+      setAvailabilityMessage(result.status === 'available'
+        ? 'This space is marked available in the venue calendar. An enquiry does not reserve the date.'
+        : result.status === 'unavailable'
+          ? 'This space is marked unavailable. You can still enquire if your plans are flexible.'
+          : 'Availability is not recorded for this date yet. You can still enquire; this does not reserve the date.')
+    } catch {
+      setAvailabilityMessage('We could not check availability just now. Send an enquiry to confirm with the venue; this does not reserve the date.')
+    }
     setStep(2)
   }
-  const sendInquiry = (event: React.FormEvent<HTMLFormElement>) => {
+  const sendInquiry = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (!values.name.trim() || !/^[+\d][\d ()-]{8,}$/.test(values.phone)) { setError('Please enter your name and a valid WhatsApp number.'); return }
-    const message = `Hello Suman Vatika, I would like to enquire about my celebration.\nName: ${values.name}\nWhatsApp: ${values.phone}\nEmail: ${values.email || 'Not provided'}\nDate: ${values.date}\nEvent: ${values.event}\nGuests: ${values.guests}\nPreferred space: ${values.space}\nBudget: ${values.budget || 'To be discussed'}\nNotes: ${values.note || 'None'}`
-    window.open(`${whatsappHref}?text=${encodeURIComponent(message)}`, '_blank', 'noopener,noreferrer')
+    if (!values.name.trim() || !/^[+\d][\d ()-]{8,}$/.test(values.phone) || (values.contact_preference === 'email' && !values.email.trim())) { setError(values.contact_preference === 'email' && !values.email.trim() ? 'Add your email address so the team can contact you.' : 'Please enter your name and a valid phone number.'); return }
+    setSaving(true)
     setError('')
+    try {
+      const response = await apiFetch('/api/inquiries', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(values),
+      })
+      const result = await response.json() as { error?: string }
+      if (!response.ok) throw new Error(result.error || 'We could not save your enquiry. Please try again.')
+      window.location.assign('/inquiry-submitted')
+    } catch (submissionError) {
+      setError(submissionError instanceof Error ? submissionError.message : 'We could not save your enquiry. Please try again.')
+      setSaving(false)
+    }
   }
-  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}><section className="inquiry-modal" role="dialog" aria-modal="true" aria-labelledby="inquiry-title"><button type="button" className="modal-close" aria-label="Close enquiry form" onClick={onClose}><X /></button><span className="eyebrow"><i />A NOTE TO OUR TEAM</span><h2 id="inquiry-title">Let's make it <em>meaningful.</em></h2><div className="step-indicator"><span className={step === 1 ? 'step-current' : 'step-done'}>{step > 1 ? <Check size={13} /> : '01'} Event details</span><i /><span className={step === 2 ? 'step-current' : ''}>02 Your details</span></div>{step === 1 ? <form onSubmit={goToDetails} className="inquiry-form"><label>Event date<input type="date" min={new Date().toISOString().slice(0, 10)} value={values.date} onChange={(event) => update('date', event.target.value)} required /></label><label>Celebration<select value={values.event} onChange={(event) => update('event', event.target.value)} required><option value="" disabled>Select event type</option>{['Wedding', 'Reception', 'Engagement', 'Mehendi / Sangeet', 'Haldi', 'Birthday', 'Corporate event', 'Other celebration'].map((item) => <option key={item}>{item}</option>)}</select></label><div className="form-row"><label>Approx. guests<input type="number" min="1" max="800" value={values.guests} onChange={(event) => update('guests', event.target.value)} required /></label><label>Preferred space<select value={values.space} onChange={(event) => update('space', event.target.value)} required><option value="" disabled>Select a space</option><option>Grand AC Hall</option><option>Royal Open Lawn</option><option>Hall + Lawn</option></select></label></div><p className="form-note">Live availability and online lead storage are not connected. Your details will be added to a WhatsApp message; send it there to contact the venue. This does not reserve a date.</p>{error && <p className="form-error" role="alert">{error}</p>}<button className="button button-maroon button-wide" type="submit">Continue <ArrowRight size={16} /></button></form> : <form onSubmit={sendInquiry} className="inquiry-form"><button className="form-back" type="button" onClick={() => { setStep(1); setError('') }}><ArrowLeft size={14} /> Back to event details</button><label>Your name<input autoComplete="name" value={values.name} onChange={(event) => update('name', event.target.value)} required placeholder="Full name" /></label><div className="form-row"><label>WhatsApp number<input autoComplete="tel" type="tel" value={values.phone} onChange={(event) => update('phone', event.target.value)} required placeholder="+91" /></label><label>Email <small>optional</small><input autoComplete="email" type="email" value={values.email} onChange={(event) => update('email', event.target.value)} placeholder="you@example.com" /></label></div><label>Budget range<select value={values.budget} onChange={(event) => update('budget', event.target.value)}><option value="">Let's discuss</option><option>Under ₹2 lakh</option><option>₹2–4 lakh</option><option>₹4–6 lakh</option><option>₹6 lakh+</option></select></label><label>Anything you'd like us to know?<textarea rows={3} value={values.note} onChange={(event) => update('note', event.target.value)} placeholder="Your ideas, requests, or questions" /></label>{error && <p className="form-error" role="alert">{error}</p>}<button className="button button-maroon button-wide" type="submit">Continue on WhatsApp <ArrowUpRight size={16} /></button><p className="form-note">Your details will be placed in a WhatsApp message. They are not stored on this website.</p></form>}</section></div>
+  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}><section className="inquiry-modal" role="dialog" aria-modal="true" aria-labelledby="inquiry-title"><button type="button" className="modal-close" aria-label="Close enquiry form" onClick={onClose}><X /></button><span className="eyebrow"><i />A NOTE TO OUR TEAM</span><h2 id="inquiry-title">Let's make it <em>meaningful.</em></h2><div className="step-indicator"><span className={step === 1 ? 'step-current' : 'step-done'}>{step > 1 ? <Check size={13} /> : '01'} Event details</span><i /><span className={step === 2 ? 'step-current' : ''}>02 Your details</span></div>{step === 1 ? <form onSubmit={goToDetails} className="inquiry-form"><label>Event date<input type="date" min={new Date().toISOString().slice(0, 10)} value={values.date} onChange={(event) => update('date', event.target.value)} required /></label><label>Celebration<select value={values.event} onChange={(event) => update('event', event.target.value)} required><option value="" disabled>Select event type</option>{['Wedding', 'Reception', 'Engagement', 'Mehendi / Sangeet', 'Haldi', 'Birthday', 'Corporate event', 'Other celebration'].map((item) => <option key={item}>{item}</option>)}</select></label><div className="form-row"><label>Approx. guests<input type="number" min="1" max="800" value={values.guests} onChange={(event) => update('guests', event.target.value)} required /></label><label>Preferred space<select value={values.space} onChange={(event) => update('space', event.target.value)} required><option value="" disabled>Select a space</option><option>Grand AC Hall</option><option>Royal Open Lawn</option><option>Hall + Lawn</option></select></label></div>{availabilityMessage && <p className="form-note" role="status">{availabilityMessage}</p>}{error && <p className="form-error" role="alert">{error}</p>}<button className="button button-maroon button-wide" type="submit">Continue <ArrowRight size={16} /></button></form> : <form onSubmit={sendInquiry} className="inquiry-form"><button className="form-back" type="button" onClick={() => { setStep(1); setError('') }}><ArrowLeft size={14} /> Back to event details</button><label>Your name<input autoComplete="name" value={values.name} onChange={(event) => update('name', event.target.value)} required placeholder="Full name" /></label><div className="form-row"><label>Phone number<input autoComplete="tel" type="tel" value={values.phone} onChange={(event) => update('phone', event.target.value)} required placeholder="+91" /></label><label><span>Email <small>optional</small></span><input autoComplete="email" type="email" value={values.email} onChange={(event) => update('email', event.target.value)} placeholder="you@example.com" /></label></div><label>Preferred way to contact you<select value={values.contact_preference} onChange={(event) => update('contact_preference', event.target.value)} required><option value="whatsapp">WhatsApp</option><option value="phone">Phone call</option><option value="email">Email</option></select></label><label>Budget range<select value={values.budget} onChange={(event) => update('budget', event.target.value)}><option value="">Let's discuss</option><option>Under ₹2 lakh</option><option>₹2–4 lakh</option><option>₹4–6 lakh</option><option>₹6 lakh+</option></select></label><label>Anything you'd like us to know?<textarea rows={3} value={values.note} onChange={(event) => update('note', event.target.value)} placeholder="Your ideas, requests, or questions" /></label>{error && <p className="form-error" role="alert">{error}</p>}<button className="button button-maroon button-wide" type="submit" disabled={saving}>{saving ? 'Saving enquiry…' : <>Submit enquiry <ArrowUpRight size={16} /></>}</button><p className="form-note">Your enquiry will be saved for our team. We will contact you soon; submitting it does not reserve a date.</p></form>}</section></div>
 }
 
 function Hero({ onOpen }: { onOpen: (date: string, event: string) => void }) {
@@ -117,7 +145,7 @@ function SpacesSection() {
   const capacity = space === 'hall' ? { Theatre: 500, Banquet: 500, Cocktail: 500 } : { Theatre: 800, Banquet: 800, Cocktail: 800 }
   const title = space === 'hall' ? 'The Grand\nAir-Conditioned Hall' : 'The Royal\nOpen Lawn'
   const points = space === 'hall' ? ['Centralized air conditioning', 'Wedding stage & mandap setup', 'Acoustic-ready for sangeet', 'Comfort for 500+ guests'] : ['Open-air celebrations for up to 800', 'Baraat & arrival staging', 'Outdoor dining and marquee options', 'A garden atmosphere after dark']
-  return <section id="spaces" className="spaces-section section-pad"><div className="spaces-heading"><SectionIntro eyebrow="ROOM TO CELEBRATE" title="Two distinct spaces.\nEndless possibilities." copy="Choose the atmosphere that feels like you. Bring both together when the guest list calls for it." /><div className="space-tabs" role="tablist" aria-label="Venue space"><button role="tab" aria-selected={space === 'hall'} className={space === 'hall' ? 'active' : ''} onClick={() => setSpace('hall')}>The Grand Hall <span>01</span></button><button role="tab" aria-selected={space === 'lawn'} className={space === 'lawn' ? 'active' : ''} onClick={() => setSpace('lawn')}>The Royal Lawn <span>02</span></button></div></div><div className="space-feature"><div className="space-image"><Image key={space} src={space === 'hall' ? '/suman-vatika-hall.png' : '/suman-vatika-lawn.png'} alt={space === 'hall' ? 'Interior of the Grand air-conditioned hall' : 'Open garden lawn prepared for an evening wedding'} fill sizes="(max-width: 760px) 100vw, 58vw" /><span className="image-index">0{space === 'hall' ? 1 : 2} / SPACES</span><span className="image-frame-corner" /></div><div className="space-details"><span className="eyebrow"><i /> SPACE 0{space === 'hall' ? 1 : 2}</span><h3>{title.split('\n').map((line) => <span key={line}>{line}<br /></span>)}</h3><p>{space === 'hall' ? 'A gracious indoor setting where thoughtful light, comfortable surroundings and the right acoustics let the celebration take centre stage.' : 'A green, open-air setting for warm evenings, grand arrivals and the freedom to celebrate under the Lucknow sky.'}</p><ul>{points.map((point) => <li key={point}><Check size={14} />{point}</li>)}</ul><div className="capacity-tool"><label htmlFor="layout-choice">CAPACITY BY SETUP</label><select id="layout-choice" value={arrangement} onChange={(event) => setArrangement(event.target.value as typeof arrangement)}><option>Theatre</option><option>Banquet</option><option>Cocktail</option></select><div className="capacity-meter"><span style={{ width: `${Math.min(100, capacity[arrangement] / 8)}%` }} /><i /></div><div className="capacity-numbers"><strong>~{capacity[arrangement]}</strong><span>guests · indicative</span></div></div><a className="text-link" href="#inquiry">Plan this space <ArrowRight size={15} /></a></div></div></section>
+  return <section id="spaces" className="spaces-section section-pad"><div className="spaces-heading"><SectionIntro eyebrow="ROOM TO CELEBRATE" title={'Two distinct spaces.\nEndless possibilities.'} copy="Choose the atmosphere that feels like you. Bring both together when the guest list calls for it." /><div className="space-tabs" role="tablist" aria-label="Venue space"><button role="tab" aria-selected={space === 'hall'} className={space === 'hall' ? 'active' : ''} onClick={() => setSpace('hall')}>The Grand Hall <span>01</span></button><button role="tab" aria-selected={space === 'lawn'} className={space === 'lawn' ? 'active' : ''} onClick={() => setSpace('lawn')}>The Royal Lawn <span>02</span></button></div></div><div className="space-feature"><div className="space-image"><Image key={space} src={space === 'hall' ? '/suman-vatika-hall.png' : '/suman-vatika-lawn.png'} alt={space === 'hall' ? 'Interior of the Grand air-conditioned hall' : 'Open garden lawn prepared for an evening wedding'} fill sizes="(max-width: 760px) 100vw, 58vw" /><span className="image-index">0{space === 'hall' ? 1 : 2} / SPACES</span><span className="image-frame-corner" /></div><div className="space-details"><span className="eyebrow"><i /> SPACE 0{space === 'hall' ? 1 : 2}</span><h3>{title.split('\n').map((line) => <span key={line}>{line}<br /></span>)}</h3><p>{space === 'hall' ? 'A gracious indoor setting where thoughtful light, comfortable surroundings and the right acoustics let the celebration take centre stage.' : 'A green, open-air setting for warm evenings, grand arrivals and the freedom to celebrate under the Lucknow sky.'}</p><ul>{points.map((point) => <li key={point}><Check size={14} />{point}</li>)}</ul><div className="capacity-tool"><label htmlFor="layout-choice">CAPACITY BY SETUP</label><select id="layout-choice" value={arrangement} onChange={(event) => setArrangement(event.target.value as typeof arrangement)}><option>Theatre</option><option>Banquet</option><option>Cocktail</option></select><div className="capacity-meter"><span style={{ width: `${Math.min(100, capacity[arrangement] / 8)}%` }} /><i /></div><div className="capacity-numbers"><strong>~{capacity[arrangement]}</strong><span>guests · indicative</span></div></div><a className="text-link" href="#inquiry">Plan this space <ArrowRight size={15} /></a></div></div></section>
 }
 
 function GallerySection({ standalone = false }: { standalone?: boolean }) {
@@ -199,10 +227,6 @@ export function PackagesPage() {
 export function ContactPage() {
   const [open, setOpen] = useState(false)
   return <><SiteHeader /><main><InnerPageHero eyebrow="CONTACT & VISITS" title="We would love to meet." copy="Come see the spaces, share what you are planning and let us help you think through the details." /><LocationSection /><InquirySection onOpen={() => setOpen(true)} /></main><SiteFooter /><MobileActionBar /><InquiryModal open={open} onClose={() => setOpen(false)} /></>
-}
-
-export function AdminUnavailablePage() {
-  return <main className="admin-unavailable"><BrandMark /><span className="eyebrow"><i /> PRIVATE VENUE MANAGEMENT</span><h1>Admin access is<br /><em>not configured.</em></h1><p>A secure admin area needs a database and authentication provider. No demo login or client-side gate is provided, so this route is intentionally unavailable until those services are connected.</p><Link href="/" className="button button-maroon">Return to the website <ArrowLeft size={15} /></Link></main>
 }
 
 export { SiteHeader, SiteFooter, MobileActionBar }

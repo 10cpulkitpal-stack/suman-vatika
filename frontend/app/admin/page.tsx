@@ -1,4 +1,4 @@
-import { AdminUnavailablePage } from '@/components/venue-site'
+import AdminDashboard from './admin-dashboard'
 
 export const metadata = {
   title: 'Venue Management | Suman Vatika',
@@ -6,7 +6,7 @@ export const metadata = {
 }
 
 export default function Page() {
-  return <AdminUnavailablePage />
+  return <AdminDashboard />
 }
 
-export const dynamic = 'force-static'
+export const dynamic = 'force-dynamic'

@@ -88,14 +88,15 @@ async function readGalleryUpload(request) {
     const dataStart = headerEnd + 4
     const next = body.indexOf(Buffer.from(`\r\n--${boundary}`), dataStart)
     if (next === -1) break
-    const disposition = headers.match(/content-disposition:\s*form-data;[^\r\n]*name="([^"]+)"(?:;\s*filename="([^"]*)")?/i)
+    const disposition = headers.match(/content-disposition:\s*form-data;[^\r\n]+/i)?.[0]
     if (disposition) {
-      const [, name, filename] = disposition
+      const name = disposition.match(/(?:^|;)\s*name\s*=\s*(?:"([^"]*)"|([^;\s]+))/i)?.slice(1).find(Boolean)
+      const hasFilename = /(?:^|;)\s*filename\*?\s*=/i.test(disposition)
       const value = body.subarray(dataStart, next)
-      if (filename !== undefined && name === 'image') {
+      if (hasFilename && name === 'image') {
         const type = headers.match(/content-type:\s*([^\r\n]+)/i)?.[1]?.trim().toLowerCase() ?? ''
-        image = { filename, type, data: value }
-      } else fields[name] = value.toString('utf8')
+        image = { type, data: value }
+      } else if (name) fields[name] = value.toString('utf8')
     }
     offset = next + 2
   }
@@ -356,7 +357,7 @@ const server = createServer(async (request, response) => {
       const category = typeof fields.category === 'string' ? fields.category.trim().slice(0, 40) : ''
       const label = typeof fields.label === 'string' ? fields.label.trim().slice(0, 120) : ''
       const placement = typeof fields.placement === 'string' ? fields.placement : ''
-      if (!image?.data.length || !image.filename) { send(response, 400, { error: 'Choose an image to upload.' }); return }
+      if (!image?.data.length) { send(response, 400, { error: 'Choose an image to upload.' }); return }
       if (image.data.length > 8 * 1024 * 1024) { send(response, 413, { error: 'Image upload is too large. Maximum size is 8 MB.' }); return }
       if (!imageTypes.has(image.type)) { send(response, 400, { error: 'Use a JPG, PNG, WebP, or AVIF image.' }); return }
       if (!validImageContent(image)) { send(response, 400, { error: 'The selected file does not match its image format.' }); return }

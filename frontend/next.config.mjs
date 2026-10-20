@@ -16,6 +16,11 @@ const nextConfig = {
       },
     ]
   },
+  async rewrites() {
+    const backend = process.env.BACKEND_API_URL?.replace(/\/+$/, '')
+    if (!backend) return []
+    return [{ source: '/api/:path*', destination: `${backend}/api/:path*` }, { source: '/media/:path*', destination: `${backend}/media/:path*` }]
+  },
 }
 
 export default nextConfig

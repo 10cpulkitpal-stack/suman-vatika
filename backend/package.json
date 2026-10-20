@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "node --watch --env-file=.env server.mjs",
-    "start": "node --env-file=.env server.mjs"
+    "start": "node server.mjs"
   },
   "dependencies": {
     "postgres": "^3.4.9"

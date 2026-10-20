@@ -26,6 +26,23 @@ Admin APIs require a valid session or (when configured) `Authorization: Bearer <
 
 ## PostgreSQL deployment
 
-Set `DATABASE_URL` to `postgresql://user:password@host:5432/suman_vatika`. The server selects PostgreSQL based on the URL scheme and initializes the same tables automatically. Set `FRONTEND_ORIGIN`, `ADMIN_PASSWORD`, and `ADMIN_SESSION_SECRET` as deployment environment values. Use a persistent PostgreSQL service in deployment. The server binds to all interfaces automatically in production; local development binds to loopback.
+The repository includes a root `render.yaml` blueprint for the Node API. Create a Supabase project, then set the following values in Render's environment settings:
 
-Uploaded gallery files currently use local disk storage. This is suitable for local development. Before deploying the API on Render, configure persistent image storage (for example, a Render persistent disk mounted for `backend/data`, or an object storage provider); otherwise uploaded files on an ephemeral service filesystem can be lost on redeploy or restart. When the API is hosted at a public URL, set `PUBLIC_API_URL` to that URL so gallery images load correctly on the frontend.
+- `DATABASE_URL`: the Supabase PostgreSQL connection URI. For a long-running Render backend, choose the Supabase Session pooler URI if Render cannot reach the direct IPv6 database endpoint. Keep the URI private.
+- `SUPABASE_URL`: the Supabase project URL.
+- `SUPABASE_SERVICE_ROLE_KEY`: the server-side service-role key. Do not add it to Vercel or frontend code.
+- `SUPABASE_GALLERY_BUCKET`: `gallery`, matching the public Storage bucket created in Supabase.
+- `GALLERY_STORAGE_DRIVER`: `supabase` (already configured by the Render blueprint).
+- `FRONTEND_ORIGIN`: the exact deployed Vercel origin, such as `https://your-site.vercel.app`.
+- `ADMIN_PASSWORD`: a strong admin password.
+- `ADMIN_SESSION_SECRET`: a random secret of at least 32 characters (Render's blueprint generates one).
+
+The API initializes its tables automatically in the configured PostgreSQL database. Existing SQLite enquiries and gallery records on your computer are not copied automatically; they remain in the local database until separately migrated.
+
+Local development keeps gallery files under `backend/data/gallery/`. Production uploads and deletions use Supabase Storage, so images persist across Render restarts and deploys.
+
+## Frontend on Vercel
+
+Set the Vercel project root directory to `frontend/` and select the Next.js framework. Configure `BACKEND_API_URL` as the Render API origin (for example, `https://suman-vatika-api.onrender.com`). The frontend proxies `/api` and `/media` through this URL. Keep `NEXT_PUBLIC_API_URL=http://localhost:4000` for local development only. Set the exact Vercel production origin in Render's `FRONTEND_ORIGIN`; include additional origins only if you want to allow specific preview deployments.
+
+The Vercel and Render services can be deployed after the Supabase project and required environment values are ready. Follow the connection details shown in Supabase's Connect panel; for this persistent Node service, use the direct connection when reachable or the Session pooler when IPv4 connectivity is required.

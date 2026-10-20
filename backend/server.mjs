@@ -153,6 +153,12 @@ function validOrigin(request) {
   return !request.headers.origin || allowedOrigins.includes(request.headers.origin)
 }
 
+function publicGallerySource(src) {
+  if (!src.startsWith('/media/')) return src
+  const apiOrigin = (process.env.PUBLIC_API_URL ?? process.env.RENDER_EXTERNAL_URL ?? `http://localhost:${port}`).replace(/\/+$/, '')
+  return `${apiOrigin}${src}`
+}
+
 const server = createServer(async (request, response) => {
   if (!cors(request, response)) return
   if (request.method === 'OPTIONS') {
@@ -165,6 +171,11 @@ const server = createServer(async (request, response) => {
   const { pathname, searchParams } = url
 
   try {
+    if (pathname === '/health' && request.method === 'GET') {
+      send(response, 200, { status: 'ok' })
+      return
+    }
+
     const mediaMatch = pathname.match(/^\/media\/gallery\/([a-f0-9-]+\.(?:jpg|png|webp|avif))$/i)
     if (mediaMatch && request.method === 'GET') {
       try {
@@ -181,8 +192,7 @@ const server = createServer(async (request, response) => {
       const placement = searchParams.get('placement') ?? 'full'
       if (!['home', 'full'].includes(placement)) { send(response, 400, { error: 'Gallery placement must be home or full.' }); return }
       const images = await query(`SELECT id, src, category, label, sort_order FROM gallery_images WHERE placement = ${dialect === 'postgres' ? '$1' : '?'} ORDER BY sort_order, created_at`, [placement])
-      const apiOrigin = (process.env.PUBLIC_API_URL ?? `http://localhost:${port}`).replace(/\/+$/, '')
-      send(response, 200, { images: images.map((image) => ({ ...image, src: image.src.startsWith('/media/') ? `${apiOrigin}${image.src}` : image.src })) })
+      send(response, 200, { images: images.map((image) => ({ ...image, src: publicGallerySource(image.src) })) })
       return
     }
 
@@ -346,9 +356,8 @@ const server = createServer(async (request, response) => {
       await initializeDatabase()
       const placement = searchParams.get('placement') ?? 'full'
       if (!['home', 'full'].includes(placement)) { send(response, 400, { error: 'Gallery placement must be home or full.' }); return }
-      const apiOrigin = (process.env.PUBLIC_API_URL ?? `http://localhost:${port}`).replace(/\/+$/, '')
       const images = await query(`SELECT id, src, category, label, sort_order FROM gallery_images WHERE placement = ${dialect === 'postgres' ? '$1' : '?'} ORDER BY sort_order, created_at`, [placement])
-      send(response, 200, { images: images.map((image) => ({ ...image, src: image.src.startsWith('/media/') ? `${apiOrigin}${image.src}` : image.src })) })
+      send(response, 200, { images: images.map((image) => ({ ...image, src: publicGallerySource(image.src) })) })
       return
     }
 
@@ -363,15 +372,40 @@ const server = createServer(async (request, response) => {
       if (!validImageContent(image)) { send(response, 400, { error: 'The selected file does not match its image format.' }); return }
       if (!category || !label || !['home', 'full'].includes(placement)) { send(response, 400, { error: 'Add a category, image caption, and valid gallery placement.' }); return }
       await initializeDatabase()
-      await mkdir(galleryDirectory, { recursive: true })
       const id = randomUUID()
-      const src = `/media/gallery/${id}${imageTypes.get(image.type)}`
-      await writeFile(resolve(galleryDirectory, `${id}${imageTypes.get(image.type)}`), image.data, { flag: 'wx' })
+      const extension = imageTypes.get(image.type)
+      const storageDriver = process.env.GALLERY_STORAGE_DRIVER ?? 'local'
+      let src
+      if (storageDriver === 'supabase') {
+        const supabaseUrl = process.env.SUPABASE_URL?.replace(/\/+$/, '')
+        const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+        const bucket = process.env.SUPABASE_GALLERY_BUCKET ?? 'gallery'
+        if (!supabaseUrl || !serviceRoleKey) { send(response, 503, { error: 'Gallery storage is not configured.' }); return }
+        const objectPath = `${id}${extension}`
+        const upload = await fetch(`${supabaseUrl}/storage/v1/object/${encodeURIComponent(bucket)}/${objectPath}`, {
+          method: 'POST',
+          headers: { apikey: serviceRoleKey, Authorization: `Bearer ${serviceRoleKey}`, 'Content-Type': image.type, 'x-upsert': 'false' },
+          body: image.data,
+        })
+        if (!upload.ok) {
+          console.error('Supabase Storage upload failed:', upload.status, await upload.text())
+          send(response, 502, { error: 'Could not save the image to gallery storage.' })
+          return
+        }
+        src = `${supabaseUrl}/storage/v1/object/public/${encodeURIComponent(bucket)}/${objectPath}`
+      } else if (storageDriver === 'local') {
+        await mkdir(galleryDirectory, { recursive: true })
+        src = `/media/gallery/${id}${extension}`
+        await writeFile(resolve(galleryDirectory, `${id}${extension}`), image.data, { flag: 'wx' })
+      } else {
+        send(response, 503, { error: 'Gallery storage driver is invalid.' })
+        return
+      }
       const latest = await query(`SELECT MAX(sort_order) AS max_order FROM gallery_images WHERE placement = ${dialect === 'postgres' ? '$1' : '?'}`, [placement])
       const sortOrder = Number(latest[0]?.max_order ?? -1) + 1
       const createdAt = new Date().toISOString()
       await query(`INSERT INTO gallery_images (id, src, category, label, sort_order, placement, created_at) VALUES (${placeholders(7)})`, [id, src, category, label, sortOrder, placement, createdAt])
-      send(response, 201, { image: { id, src: `${(process.env.PUBLIC_API_URL ?? `http://localhost:${port}`).replace(/\/+$/, '')}${src}`, category, label, sort_order: sortOrder, placement } })
+      send(response, 201, { image: { id, src: publicGallerySource(src), category, label, sort_order: sortOrder, placement } })
       return
     }
 
@@ -404,6 +438,20 @@ const server = createServer(async (request, response) => {
       if (localFile) {
         const references = await query(`SELECT id FROM gallery_images WHERE src = ${dialect === 'postgres' ? '$1' : '?'}`, [rows[0].src])
         if (!references.length) await unlink(resolve(galleryDirectory, localFile)).catch(() => {})
+      }
+      const supabaseUrl = process.env.SUPABASE_URL?.replace(/\/+$/, '')
+      const bucket = process.env.SUPABASE_GALLERY_BUCKET ?? 'gallery'
+      const publicPrefix = supabaseUrl ? `${supabaseUrl}/storage/v1/object/public/${encodeURIComponent(bucket)}/` : ''
+      if (publicPrefix && rows[0].src.startsWith(publicPrefix)) {
+        const references = await query(`SELECT id FROM gallery_images WHERE src = ${dialect === 'postgres' ? '$1' : '?'}`, [rows[0].src])
+        if (!references.length && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+          const objectPath = rows[0].src.slice(publicPrefix.length)
+          const removal = await fetch(`${supabaseUrl}/storage/v1/object/${encodeURIComponent(bucket)}/${objectPath}`, {
+            method: 'DELETE',
+            headers: { apikey: process.env.SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}` },
+          })
+          if (!removal.ok) console.error('Supabase Storage cleanup failed:', removal.status, await removal.text())
+        }
       }
       send(response, 200, { id, deleted: true })
       return

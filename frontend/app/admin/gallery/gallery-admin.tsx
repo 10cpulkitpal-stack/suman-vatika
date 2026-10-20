@@ -6,7 +6,7 @@ import { ArrowDown, ArrowLeft, ArrowUp, ImagePlus, LoaderCircle, LogOut, Pencil,
 import { apiFetch } from '@/lib/api'
 
 type GalleryImage = { id: string; src: string; category: string; label: string; sort_order: number }
-const apiOrigin = (process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000').replace(/\/+$/, '')
+const apiOrigin = process.env.NODE_ENV === 'production' ? '' : (process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000').replace(/\/+$/, '')
 const categories = ['Mandap', 'The lawn', 'The grand hall', 'Celebrations']
 
 export default function GalleryAdmin() {

@@ -25,11 +25,12 @@ import {
 const phoneHref = 'tel:+919839074240'
 const whatsappHref = 'https://wa.me/919839074240'
 const address = '12A, Vijay Nagar Colony, Krishna Nagar, Alambagh, Lucknow, Uttar Pradesh 226023'
-const venueImages = [
-  { src: '/suman-vatika-mandap.png', category: 'Mandap', label: 'A setting made for the moment' },
-  { src: '/suman-vatika-lawn.png', category: 'The lawn', label: 'An evening under the stars' },
-  { src: '/suman-vatika-hall.png', category: 'The grand hall', label: 'A room for the whole family' },
-  { src: '/suman-vatika-celebration.png', category: 'Celebrations', label: 'Every detail, thoughtfully prepared' },
+type VenueImage = { id: string; src: string; category: string; label: string; sort_order?: number }
+const defaultVenueImages: VenueImage[] = [
+  { id: 'mandap', src: '/suman-vatika-mandap.png', category: 'Mandap', label: 'A setting made for the moment' },
+  { id: 'lawn', src: '/suman-vatika-lawn.png', category: 'The lawn', label: 'An evening under the stars' },
+  { id: 'hall', src: '/suman-vatika-hall.png', category: 'The grand hall', label: 'A room for the whole family' },
+  { id: 'celebration', src: '/suman-vatika-celebration.png', category: 'Celebrations', label: 'Every detail, thoughtfully prepared' },
 ]
 const packages = [
   { name: 'Silver Utsav', capacity: 'Up to 250 guests', price: '₹1,50,000', tone: 'light', features: ['Grand hall', 'Basic decor', 'Standard menu', 'Parking & security', '4-hour celebration'] },
@@ -149,16 +150,34 @@ function SpacesSection() {
 }
 
 function GallerySection({ standalone = false }: { standalone?: boolean }) {
+  const [images, setImages] = useState(defaultVenueImages)
   const [filter, setFilter] = useState('All moments')
-  const [selected, setSelected] = useState<number | null>(null)
-  const filters = ['All moments', 'Mandap', 'The lawn', 'The grand hall', 'Celebrations']
-  const filtered = filter === 'All moments' ? venueImages : venueImages.filter((item) => item.category === filter)
-  const imageIndex = selected === null ? -1 : venueImages.findIndex((image) => image.src === filtered[selected]?.src)
-  const selectedImage = imageIndex >= 0 ? venueImages[imageIndex] : null
-  const moveImage = (direction: number) => { if (imageIndex < 0) return; const next = (imageIndex + direction + venueImages.length) % venueImages.length; const nextCategoryIndex = filtered.findIndex((image) => image.src === venueImages[next].src); setSelected(nextCategoryIndex < 0 ? 0 : nextCategoryIndex); if (nextCategoryIndex < 0) setFilter('All moments') }
-  return <section id="gallery" className={`gallery-section section-pad${standalone ? ' gallery-standalone' : ''}`}><div className="gallery-heading"><SectionIntro eyebrow="A GLIMPSE OF THE DAY" title={standalone ? 'A little of the magic.' : 'The feeling stays with you.'} copy="A few details from a place made for the moments you will talk about for years." /><Link href="/gallery" className="text-link gallery-all-link">View the gallery <ArrowUpRight size={15} /></Link></div><div className="gallery-filters" role="tablist" aria-label="Gallery categories">{filters.map((item) => <button key={item} role="tab" aria-selected={filter === item} className={filter === item ? 'active' : ''} onClick={() => { setFilter(item); setSelected(null) }}>{item}</button>)}</div><div className="gallery-grid">{filtered.map((item, index) => <button className={`gallery-tile gallery-tile-${index + 1}`} type="button" key={item.src} onClick={() => setSelected(index)} aria-label={`Open image: ${item.label}`}><Image src={item.src} alt={item.label} fill sizes="(max-width: 700px) 90vw, 40vw" /><span className="gallery-tile-overlay"><span>{item.category}</span><strong>{item.label}</strong><ArrowUpRight size={19} /></span></button>)}</div><div className="gallery-note"><span>IMAGES FROM OUR CELEBRATION COLLECTION</span><i /><span>01 — 04</span></div>{selectedImage && <div className="lightbox" role="dialog" aria-modal="true" aria-label="Gallery image" onClick={(event) => { if (event.target === event.currentTarget) setSelected(null) }} onKeyDown={(event) => { if (event.key === 'Escape') setSelected(null); if (event.key === 'ArrowRight') moveImage(1); if (event.key === 'ArrowLeft') moveImage(-1) }} tabIndex={-1}><button className="lightbox-close" aria-label="Close image" onClick={() => setSelected(null)}><X /></button><button className="lightbox-prev" aria-label="Previous image" onClick={() => moveImage(-1)}><ChevronLeft /></button><div className="lightbox-image"><Image src={selectedImage.src} alt={selectedImage.label} fill sizes="90vw" /></div><button className="lightbox-next" aria-label="Next image" onClick={() => moveImage(1)}><ChevronRight /></button><p>{selectedImage.label} <span>· {selectedImage.category}</span></p></div>}</section>
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const categories = Array.from(new Set(images.map((item) => item.category)))
+  const filters = ['All moments', ...categories]
+  const filtered = filter === 'All moments' ? images : images.filter((item) => item.category === filter)
+  const selectedImage = images.find((image) => image.id === selectedId) ?? null
+  useEffect(() => {
+    let active = true
+    apiFetch('/api/gallery', { cache: 'no-store' })
+      .then(async (response) => {
+        if (!response.ok) return
+        const result = await response.json() as { images?: VenueImage[] }
+        if (active && result.images?.length) setImages(result.images)
+        else if (active && result.images) setImages([])
+      })
+      .catch(() => {})
+    return () => { active = false }
+  }, [])
+  const moveImage = (direction: number) => {
+    if (!selectedImage || !images.length) return
+    const index = images.findIndex((image) => image.id === selectedImage.id)
+    const next = images[(index + direction + images.length) % images.length]
+    setSelectedId(next.id)
+    if (filter !== 'All moments' && next.category !== filter) setFilter('All moments')
+  }
+  return <section id="gallery" className={`gallery-section section-pad${standalone ? ' gallery-standalone' : ''}`}><div className="gallery-heading"><SectionIntro eyebrow="A GLIMPSE OF THE DAY" title={standalone ? 'A little of the magic.' : 'The feeling stays with you.'} copy="A few details from a place made for the moments you will talk about for years." /><Link href="/gallery" className="text-link gallery-all-link">View the gallery <ArrowUpRight size={15} /></Link></div><div className="gallery-filters" role="tablist" aria-label="Gallery categories">{filters.map((item) => <button key={item} role="tab" aria-selected={filter === item} className={filter === item ? 'active' : ''} onClick={() => { setFilter(item); setSelectedId(null) }}>{item}</button>)}</div><div className="gallery-grid">{filtered.map((item, index) => <button className={`gallery-tile gallery-tile-${index + 1}`} type="button" key={item.id} onClick={() => setSelectedId(item.id)} aria-label={`Open image: ${item.label}`}><img src={item.src} alt={item.label} /><span className="gallery-tile-overlay"><span>{item.category}</span><strong>{item.label}</strong><ArrowUpRight size={19} /></span></button>)}</div><div className="gallery-note"><span>IMAGES FROM OUR CELEBRATION COLLECTION</span><i /><span>{String(images.length).padStart(2, '0')} IMAGES</span></div>{selectedImage && <div className="lightbox" role="dialog" aria-modal="true" aria-label="Gallery image" onClick={(event) => { if (event.target === event.currentTarget) setSelectedId(null) }} onKeyDown={(event) => { if (event.key === 'Escape') setSelectedId(null); if (event.key === 'ArrowRight') moveImage(1); if (event.key === 'ArrowLeft') moveImage(-1) }} tabIndex={-1}><button className="lightbox-close" aria-label="Close image" onClick={() => setSelectedId(null)}><X /></button><button className="lightbox-prev" aria-label="Previous image" onClick={() => moveImage(-1)}><ChevronLeft /></button><div className="lightbox-image"><img src={selectedImage.src} alt={selectedImage.label} /></div><button className="lightbox-next" aria-label="Next image" onClick={() => moveImage(1)}><ChevronRight /></button><p>{selectedImage.label} <span>· {selectedImage.category}</span></p></div>}</section>
 }
-
 function PackagesSection({ standalone = false, onEnquire }: { standalone?: boolean; onEnquire: () => void }) {
   return <section id="packages" className={`packages-section section-pad${standalone ? ' packages-standalone' : ''}`}><div className="packages-heading"><SectionIntro eyebrow="A STARTING POINT, NOT A LIMIT" title={standalone ? 'Find your kind of celebration.' : 'A thoughtful beginning.'} copy="Each celebration is different. These starting points help us understand what matters to you." /><span className="package-currency-note">INVESTMENT FROM<br /><b>₹ INR</b></span></div><div className="package-grid">{packages.map((item, index) => <article key={item.name} className={`package-card package-${item.tone}`}><div className="package-top"><span>0{index + 1} / CELEBRATION</span>{item.tone === 'featured' && <span className="package-badge">MOST BOOKED</span>}</div><div className="package-title"><h3>{item.name}</h3><span>{item.capacity}</span></div><div className="package-price"><strong>{item.price}</strong><span>onwards</span></div><div className="package-rule" /><p className="package-includes">A considered foundation for the day you have in mind.</p><ul>{item.features.map((feature) => <li key={feature}><Check size={14} />{feature}</li>)}</ul><button type="button" onClick={onEnquire} className="package-cta">Enquire about this <ArrowUpRight size={15} /></button></article>)}</div><p className="package-disclaimer">Indicative starting prices. Final pricing depends on date, guest count and event requirements; our team will prepare a tailored quotation.</p></section>
 }

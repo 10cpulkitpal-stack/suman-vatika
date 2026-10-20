@@ -57,6 +57,28 @@ export async function initializeDatabase() {
     updated_at TEXT NOT NULL,
     PRIMARY KEY (event_date, space)
   )`)
+  await query(`CREATE TABLE IF NOT EXISTS gallery_images (
+    id TEXT PRIMARY KEY,
+    src TEXT NOT NULL,
+    category TEXT NOT NULL,
+    label TEXT NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+  )`)
+  await query('CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
+  const gallerySeed = await query(`SELECT value FROM app_settings WHERE key = ${dialect === 'postgres' ? '$1' : '?'}`, ['gallery_seeded'])
+  if (!gallerySeed.length) {
+    const images = [
+      ['/suman-vatika-mandap.png', 'Mandap', 'A setting made for the moment'],
+      ['/suman-vatika-lawn.png', 'The lawn', 'An evening under the stars'],
+      ['/suman-vatika-hall.png', 'The grand hall', 'A room for the whole family'],
+      ['/suman-vatika-celebration.png', 'Celebrations', 'Every detail, thoughtfully prepared'],
+    ]
+    for (const [index, [src, category, label]] of images.entries()) {
+      await query(`INSERT INTO gallery_images (id, src, category, label, sort_order, created_at) VALUES (${placeholders(6)})`, [`seed-${index + 1}`, src, category, label, index, new Date().toISOString()])
+    }
+    await query(`INSERT INTO app_settings (key, value) VALUES (${placeholders(2)})`, ['gallery_seeded', 'true'])
+  }
 }
 
 export function placeholders(count) {

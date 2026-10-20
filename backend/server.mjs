@@ -1,5 +1,8 @@
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
 import { createServer } from 'node:http'
+import { mkdir, writeFile, unlink, readFile } from 'node:fs/promises'
+import { dirname, extname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { initializeDatabase, isValidDate, dialect, query, placeholders } from './database.mjs'
 
 const port = Number(process.env.PORT ?? 4000)
@@ -8,6 +11,16 @@ const cookieName = 'sv_admin_session'
 const sessionLifetimeSeconds = 60 * 60 * 8
 const allowedOrigins = (process.env.FRONTEND_ORIGIN ?? 'http://localhost:3000').split(',').map((value) => value.trim()).filter(Boolean)
 const sessionSecret = process.env.ADMIN_SESSION_SECRET
+const galleryDirectory = resolve(dirname(fileURLToPath(import.meta.url)), 'data', 'gallery')
+const imageTypes = new Map([['image/jpeg', '.jpg'], ['image/png', '.png'], ['image/webp', '.webp'], ['image/avif', '.avif']])
+
+function validImageContent(image) {
+  if (image.type === 'image/jpeg') return image.data[0] === 0xff && image.data[1] === 0xd8 && image.data[2] === 0xff
+  if (image.type === 'image/png') return image.data.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+  if (image.type === 'image/webp') return image.data.toString('ascii', 0, 4) === 'RIFF' && image.data.toString('ascii', 8, 12) === 'WEBP'
+  if (image.type === 'image/avif') return image.data.toString('ascii', 4, 8) === 'ftyp' && /^(avif|avis)$/.test(image.data.toString('ascii', 8, 12))
+  return false
+}
 
 if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT must be a valid port number.')
 
@@ -41,6 +54,52 @@ async function readJson(request) {
   try { return JSON.parse(body || '{}') } catch {
     throw Object.assign(new Error('Request body must be valid JSON.'), { status: 400 })
   }
+}
+
+async function readBuffer(request, maxBytes) {
+  const chunks = []
+  let size = 0
+  for await (const chunk of request) {
+    size += chunk.length
+    if (size > maxBytes) throw Object.assign(new Error('Image upload is too large. Maximum size is 8 MB.'), { status: 413 })
+    chunks.push(chunk)
+  }
+  return Buffer.concat(chunks)
+}
+
+async function readGalleryUpload(request) {
+  const contentType = request.headers['content-type'] ?? ''
+  const boundary = contentType.match(/boundary=(?:"([^"]+)"|([^;]+))/i)?.slice(1).find(Boolean)
+  if (!contentType.toLowerCase().startsWith('multipart/form-data') || !boundary) {
+    throw Object.assign(new Error('Upload must use a multipart form.'), { status: 400 })
+  }
+  const body = await readBuffer(request, 8 * 1024 * 1024 + 16_384)
+  const marker = Buffer.from(`--${boundary}`)
+  const fields = {}
+  let image
+  let offset = 0
+  while ((offset = body.indexOf(marker, offset)) !== -1) {
+    offset += marker.length
+    if (body.subarray(offset, offset + 2).equals(Buffer.from('--'))) break
+    if (body.subarray(offset, offset + 2).equals(Buffer.from('\r\n'))) offset += 2
+    const headerEnd = body.indexOf(Buffer.from('\r\n\r\n'), offset)
+    if (headerEnd === -1) break
+    const headers = body.subarray(offset, headerEnd).toString('utf8')
+    const dataStart = headerEnd + 4
+    const next = body.indexOf(Buffer.from(`\r\n--${boundary}`), dataStart)
+    if (next === -1) break
+    const disposition = headers.match(/content-disposition:\s*form-data;[^\r\n]*name="([^"]+)"(?:;\s*filename="([^"]*)")?/i)
+    if (disposition) {
+      const [, name, filename] = disposition
+      const value = body.subarray(dataStart, next)
+      if (filename !== undefined && name === 'image') {
+        const type = headers.match(/content-type:\s*([^\r\n]+)/i)?.[1]?.trim().toLowerCase() ?? ''
+        image = { filename, type, data: value }
+      } else fields[name] = value.toString('utf8')
+    }
+    offset = next + 2
+  }
+  return { fields, image }
 }
 
 function cookieValue(request, name) {
@@ -105,6 +164,25 @@ const server = createServer(async (request, response) => {
   const { pathname, searchParams } = url
 
   try {
+    const mediaMatch = pathname.match(/^\/media\/gallery\/([a-f0-9-]+\.(?:jpg|png|webp|avif))$/i)
+    if (mediaMatch && request.method === 'GET') {
+      try {
+        const file = await readFile(resolve(galleryDirectory, mediaMatch[1]))
+        const type = [...imageTypes].find(([, extension]) => extension === extname(mediaMatch[1]))?.[0] ?? 'application/octet-stream'
+        response.writeHead(200, { 'Content-Type': type, 'Content-Length': file.length, 'Cache-Control': 'public, max-age=31536000, immutable', 'X-Content-Type-Options': 'nosniff' })
+        response.end(file)
+      } catch { send(response, 404, { error: 'Image not found.' }) }
+      return
+    }
+
+    if (pathname === '/api/gallery' && request.method === 'GET') {
+      await initializeDatabase()
+      const images = await query('SELECT id, src, category, label, sort_order FROM gallery_images ORDER BY sort_order, created_at')
+      const apiOrigin = (process.env.PUBLIC_API_URL ?? `http://localhost:${port}`).replace(/\/+$/, '')
+      send(response, 200, { images: images.map((image) => ({ ...image, src: image.src.startsWith('/media/') ? `${apiOrigin}${image.src}` : image.src })) })
+      return
+    }
+
     if (pathname === '/api/admin/session' && request.method === 'GET') {
       send(response, 200, { authenticated: isAdmin(request) })
       return
@@ -258,6 +336,67 @@ const server = createServer(async (request, response) => {
       await query(`INSERT INTO date_availability (event_date, space, status, updated_at) VALUES (${placeholders(4)}) ON CONFLICT (event_date, space) DO UPDATE SET status = excluded.status, updated_at = excluded.updated_at`,
         [date, space, body.status, new Date().toISOString()])
       send(response, 200, { date, space, status: body.status, reservesDate: false })
+      return
+    }
+
+    if (pathname === '/api/admin/gallery' && request.method === 'GET') {
+      await initializeDatabase()
+      const apiOrigin = (process.env.PUBLIC_API_URL ?? `http://localhost:${port}`).replace(/\/+$/, '')
+      const images = await query('SELECT id, src, category, label, sort_order FROM gallery_images ORDER BY sort_order, created_at')
+      send(response, 200, { images: images.map((image) => ({ ...image, src: image.src.startsWith('/media/') ? `${apiOrigin}${image.src}` : image.src })) })
+      return
+    }
+
+    if (pathname === '/api/admin/gallery' && request.method === 'POST') {
+      const { fields, image } = await readGalleryUpload(request)
+      const category = typeof fields.category === 'string' ? fields.category.trim().slice(0, 40) : ''
+      const label = typeof fields.label === 'string' ? fields.label.trim().slice(0, 120) : ''
+      if (!image?.data.length || !image.filename) { send(response, 400, { error: 'Choose an image to upload.' }); return }
+      if (image.data.length > 8 * 1024 * 1024) { send(response, 413, { error: 'Image upload is too large. Maximum size is 8 MB.' }); return }
+      if (!imageTypes.has(image.type)) { send(response, 400, { error: 'Use a JPG, PNG, WebP, or AVIF image.' }); return }
+      if (!validImageContent(image)) { send(response, 400, { error: 'The selected file does not match its image format.' }); return }
+      if (!category || !label) { send(response, 400, { error: 'Add a category and image caption.' }); return }
+      await initializeDatabase()
+      await mkdir(galleryDirectory, { recursive: true })
+      const id = randomUUID()
+      const src = `/media/gallery/${id}${imageTypes.get(image.type)}`
+      await writeFile(resolve(galleryDirectory, `${id}${imageTypes.get(image.type)}`), image.data, { flag: 'wx' })
+      const latest = await query('SELECT MAX(sort_order) AS max_order FROM gallery_images')
+      const sortOrder = Number(latest[0]?.max_order ?? -1) + 1
+      const createdAt = new Date().toISOString()
+      await query(`INSERT INTO gallery_images (id, src, category, label, sort_order, created_at) VALUES (${placeholders(6)})`, [id, src, category, label, sortOrder, createdAt])
+      send(response, 201, { image: { id, src: `${(process.env.PUBLIC_API_URL ?? `http://localhost:${port}`).replace(/\/+$/, '')}${src}`, category, label, sort_order: sortOrder } })
+      return
+    }
+
+    const galleryMatch = pathname.match(/^\/api\/admin\/gallery\/([^/]+)$/)
+    if (galleryMatch && request.method === 'PATCH') {
+      const id = decodeURIComponent(galleryMatch[1])
+      const body = await readJson(request)
+      await initializeDatabase()
+      if (body.sort_order !== undefined) {
+        if (!Number.isInteger(body.sort_order) || body.sort_order < 0 || body.sort_order > 1000) { send(response, 400, { error: 'Gallery position is invalid.' }); return }
+        const rows = await query(`UPDATE gallery_images SET sort_order = ${dialect === 'postgres' ? '$1' : '?'} WHERE id = ${dialect === 'postgres' ? '$2' : '?'} RETURNING id`, [body.sort_order, id])
+        if (!rows.length) { send(response, 404, { error: 'Gallery image not found.' }); return }
+      } else {
+        const category = typeof body.category === 'string' ? body.category.trim().slice(0, 40) : ''
+        const label = typeof body.label === 'string' ? body.label.trim().slice(0, 120) : ''
+        if (!category || !label) { send(response, 400, { error: 'Add a category and image caption.' }); return }
+        const rows = await query(`UPDATE gallery_images SET category = ${dialect === 'postgres' ? '$1' : '?'}, label = ${dialect === 'postgres' ? '$2' : '?'} WHERE id = ${dialect === 'postgres' ? '$3' : '?'} RETURNING id`, [category, label, id])
+        if (!rows.length) { send(response, 404, { error: 'Gallery image not found.' }); return }
+      }
+      send(response, 200, { id, updated: true })
+      return
+    }
+
+    if (galleryMatch && request.method === 'DELETE') {
+      const id = decodeURIComponent(galleryMatch[1])
+      await initializeDatabase()
+      const rows = await query(`DELETE FROM gallery_images WHERE id = ${dialect === 'postgres' ? '$1' : '?'} RETURNING id, src`, [id])
+      if (!rows.length) { send(response, 404, { error: 'Gallery image not found.' }); return }
+      const localFile = rows[0].src.match(/^\/media\/gallery\/([a-f0-9-]+\.(?:jpg|png|webp|avif))$/i)?.[1]
+      if (localFile) await unlink(resolve(galleryDirectory, localFile)).catch(() => {})
+      send(response, 200, { id, deleted: true })
       return
     }
 

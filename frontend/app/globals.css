@@ -180,6 +180,8 @@ img { display: block; }
 .gallery-tile-1 { grid-row: span 2; }
 .gallery-tile-4 { grid-column: 3; }
 .gallery-tile img { object-fit: cover; transition: transform .6s; }
+.gallery-tile > img, .lightbox-image > img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transition: transform .6s; }
+.lightbox-image > img { object-fit: contain; }
 .gallery-tile:hover img { transform: scale(1.05); }
 .gallery-tile-overlay { position: absolute; inset: 35% 0 0; display: flex; flex-direction: column; justify-content: end; align-items: flex-start; gap: 7px; padding: 18px; background: linear-gradient(transparent,rgba(28,19,16,.72)); color: white; }
 .gallery-tile-overlay > span { font-size: 8px; letter-spacing: .14em; text-transform: uppercase; }
@@ -525,6 +527,52 @@ img { display: block; }
 .admin-secure-label, .admin-quiet-button { display: inline-flex; align-items: center; gap: 8px; color: #71665c; font-size: 11px; }
 .admin-secure-label svg { color: #718064; }
 .admin-quiet-button { padding: 9px 0; border: 0; background: transparent; cursor: pointer; }
+.gallery-admin-content { padding-top: 38px; }
+.gallery-admin-back { display: inline-flex; align-items: center; gap: 8px; margin-bottom: 30px; color: #75685e; font-size: 12px; text-decoration: none; }
+.gallery-admin-count { align-self: center; color: #76695e; font-size: 12px; }
+.gallery-admin-message { margin: 16px 0 0; color: #416a4c; font-size: 13px; }
+.gallery-upload-panel { display: grid; grid-template-columns: 1fr 1fr; gap: 22px 30px; margin-top: 34px; padding: 28px; border: 1px solid #e5ded2; background: #fbf8f0; }
+.gallery-upload-panel h2 { margin: 12px 0 5px; color: var(--wine); font-family: var(--serif); font-size: 28px; font-weight: 400; }
+.gallery-upload-panel h2 em { color: #b69761; }
+.gallery-upload-panel p { margin: 0; color: #81766b; font-size: 12px; }
+.gallery-upload-panel label, .gallery-upload-fields label, .gallery-edit-form label { display: grid; gap: 7px; color: #62594f; font-size: 12px; }
+.gallery-upload-panel input, .gallery-upload-panel select, .gallery-edit-form input, .gallery-edit-form select { min-width: 0; min-height: 42px; padding: 9px 11px; border: 1px solid #ddd5c9; background: #fffefa; color: var(--ink); font: inherit; }
+.gallery-upload-panel input[type="file"] { padding: 7px; }
+.gallery-upload-fields { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1.5fr auto; align-items: end; gap: 14px; }
+.gallery-upload-fields .button { min-height: 42px; white-space: nowrap; }
+.gallery-admin-list-heading { display: flex; justify-content: space-between; align-items: end; margin: 44px 0 17px; }
+.gallery-admin-list-heading h2 { margin: 0; color: var(--wine); font-family: var(--serif); font-size: 28px; font-weight: 400; }
+.gallery-admin-list-heading span { color: #80766d; font-size: 12px; }
+.gallery-admin-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+.gallery-admin-card { min-width: 0; border: 1px solid #e5ded2; background: #fbf8f0; }
+.gallery-admin-preview { position: relative; height: 210px; overflow: hidden; background: #e7e1d8; }
+.gallery-admin-preview > img { width: 100%; height: 100%; object-fit: cover; }
+.gallery-admin-preview > span { position: absolute; left: 12px; bottom: 12px; padding: 6px 9px; background: #241b1bd9; color: white; font-size: 10px; }
+.gallery-order-controls { position: absolute; top: 10px; right: 10px; display: flex; gap: 5px; }
+.gallery-order-controls button, .gallery-admin-card-actions button { display: grid; width: 34px; height: 34px; place-items: center; border: 1px solid #e4ddd2; background: #fffdf8; color: #603238; cursor: pointer; }
+.gallery-order-controls button:disabled, .gallery-admin-card-actions button:disabled { opacity: .4; cursor: default; }
+.gallery-admin-card-caption { display: flex; min-height: 73px; align-items: center; justify-content: space-between; gap: 10px; padding: 14px; }
+.gallery-admin-card-caption > div:first-child { display: grid; gap: 5px; min-width: 0; }
+.gallery-admin-card-caption strong { overflow: hidden; color: #3b302c; font-size: 13px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.gallery-admin-card-caption span { color: #897d70; font-size: 11px; }
+.gallery-admin-card-actions { display: flex; gap: 6px; }
+.gallery-admin-card-actions button { width: 31px; height: 31px; }
+.gallery-edit-form { display: grid; gap: 11px; padding: 14px; }
+.gallery-edit-form > div { display: flex; gap: 14px; }
+.gallery-edit-form button { display: inline-flex; align-items: center; gap: 5px; padding: 3px 0; border: 0; background: transparent; color: #603238; font: inherit; font-size: 12px; cursor: pointer; }
+@media (max-width: 800px) {
+  .gallery-admin-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .gallery-upload-panel { grid-template-columns: 1fr; }
+  .gallery-upload-fields { grid-template-columns: 1fr 1fr; }
+  .gallery-upload-fields .button { grid-column: 1 / -1; }
+}
+@media (max-width: 540px) {
+  .gallery-admin-grid { grid-template-columns: 1fr; }
+  .gallery-upload-panel { padding: 20px; }
+  .gallery-upload-fields { grid-template-columns: 1fr; }
+  .gallery-upload-fields .button { grid-column: auto; }
+  .gallery-admin-preview { height: 230px; }
+}
 .admin-content { width: min(100% - 56px, 1180px); margin: 0 auto; padding: 62px 0 90px; }
 .admin-heading { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 34px; }
 .admin-heading h1, .admin-login-card h1 { margin: 14px 0 9px; color: var(--wine); font-family: var(--serif); font-size: clamp(39px, 5vw, 56px); font-weight: 400; line-height: 1.05; }

@@ -3,7 +3,7 @@ services:
     name: suman-vatika-api
     runtime: node
     rootDir: backend
-    buildCommand: corepack enable && pnpm install --frozen-lockfile
+    buildCommand: pnpm install --frozen-lockfile
     startCommand: pnpm start
     healthCheckPath: /health
     envVars:

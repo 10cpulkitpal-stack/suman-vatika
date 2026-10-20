@@ -28,6 +28,8 @@ Admin APIs require a valid session or (when configured) `Authorization: Bearer <
 
 The repository includes a root `render.yaml` blueprint for the Node API. Create a Supabase project, then set the following values in Render's environment settings:
 
+For a manually configured Render service, use `pnpm install --frozen-lockfile` as the build command and `pnpm start` as the start command. Do not run `corepack enable` in Render's build command.
+
 - `DATABASE_URL`: the Supabase PostgreSQL connection URI. For a long-running Render backend, choose the Supabase Session pooler URI if Render cannot reach the direct IPv6 database endpoint. Keep the URI private.
 - `SUPABASE_URL`: the Supabase project URL.
 - `SUPABASE_SERVICE_ROLE_KEY`: the server-side service-role key. Do not add it to Vercel or frontend code.

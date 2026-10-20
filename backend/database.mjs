@@ -63,8 +63,18 @@ export async function initializeDatabase() {
     category TEXT NOT NULL,
     label TEXT NOT NULL,
     sort_order INTEGER NOT NULL DEFAULT 0,
+    placement TEXT NOT NULL DEFAULT 'full',
     created_at TEXT NOT NULL
   )`)
+  if (dialect === 'postgres') {
+    await query("ALTER TABLE gallery_images ADD COLUMN IF NOT EXISTS placement TEXT NOT NULL DEFAULT 'full'")
+  } else {
+    const columns = await query('PRAGMA table_info(gallery_images)')
+    if (!columns.some((column) => column.name === 'placement')) {
+      await query("ALTER TABLE gallery_images ADD COLUMN placement TEXT NOT NULL DEFAULT 'full'")
+    }
+  }
+  await query('CREATE INDEX IF NOT EXISTS gallery_images_placement_order_idx ON gallery_images (placement, sort_order)')
   await query('CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
   const gallerySeed = await query(`SELECT value FROM app_settings WHERE key = ${dialect === 'postgres' ? '$1' : '?'}`, ['gallery_seeded'])
   if (!gallerySeed.length) {
@@ -75,9 +85,17 @@ export async function initializeDatabase() {
       ['/suman-vatika-celebration.png', 'Celebrations', 'Every detail, thoughtfully prepared'],
     ]
     for (const [index, [src, category, label]] of images.entries()) {
-      await query(`INSERT INTO gallery_images (id, src, category, label, sort_order, created_at) VALUES (${placeholders(6)})`, [`seed-${index + 1}`, src, category, label, index, new Date().toISOString()])
+      await query(`INSERT INTO gallery_images (id, src, category, label, sort_order, placement, created_at) VALUES (${placeholders(7)})`, [`seed-${index + 1}`, src, category, label, index, 'full', new Date().toISOString()])
     }
     await query(`INSERT INTO app_settings (key, value) VALUES (${placeholders(2)})`, ['gallery_seeded', 'true'])
+  }
+  const homeGallerySeed = await query(`SELECT value FROM app_settings WHERE key = ${dialect === 'postgres' ? '$1' : '?'}`, ['home_gallery_seeded'])
+  if (!homeGallerySeed.length) {
+    const fullGallery = await query(`SELECT id, src, category, label, sort_order, created_at FROM gallery_images WHERE placement = ${dialect === 'postgres' ? '$1' : '?'} ORDER BY sort_order, created_at`, ['full'])
+    for (const image of fullGallery) {
+      await query(`INSERT INTO gallery_images (id, src, category, label, sort_order, placement, created_at) VALUES (${placeholders(7)})`, [`home-${image.id}`, image.src, image.category, image.label, image.sort_order, 'home', image.created_at])
+    }
+    await query(`INSERT INTO app_settings (key, value) VALUES (${placeholders(2)})`, ['home_gallery_seeded', 'true'])
   }
 }
 

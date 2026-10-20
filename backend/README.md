@@ -11,7 +11,7 @@ This is a standalone Node.js API server. The Next.js frontend lives in `../front
 
 The backend uses Node.js 22.5 or newer. Local SQLite data is written to `backend/data/suman-vatika.db` and ignored by Git.
 
-Gallery photos can be managed at `/admin/gallery` after signing into the admin portal. The first database initialization imports the current four website gallery photos. New uploads are limited to 8 MB (JPG, PNG, WebP, or AVIF); uploaded files are saved under `backend/data/gallery/`, which is also ignored by Git.
+Gallery photos can be managed at `/admin/gallery` after signing into the admin portal. Its Homepage preview and Full gallery page tabs manage independent image lists. The first database initialization imports the current four website gallery photos into both lists. New uploads are limited to 8 MB (JPG, PNG, WebP, or AVIF); uploaded files are saved under `backend/data/gallery/`, which is also ignored by Git.
 
 ## API
 
@@ -20,7 +20,7 @@ Gallery photos can be managed at `/admin/gallery` after signing into the admin p
 - `POST /api/admin/session` signs in with the configured password and issues an eight-hour HTTP-only session cookie. `GET` checks the session; `DELETE` signs out.
 - `GET /api/admin/inquiries` lists the latest 100 enquiries; `PATCH /api/admin/inquiries/:id` updates a status (`new`, `contacted`, `quoted`, `confirmed`, or `closed`) or edits the request details; `DELETE /api/admin/inquiries/:id` permanently deletes a request.
 - `GET /api/admin/availability` lists availability records; `PUT` sets a date/space status. Use `*` as the space to apply a status to every space.
-- `GET /api/gallery` lists published gallery photos. Admin `GET` lists them, `POST` uploads a photo, `PATCH /api/admin/gallery/:id` edits its caption/category or ordering, and `DELETE` removes it.
+- `GET /api/gallery?placement=home|full` lists photos for the homepage preview or full gallery page. Admin `GET /api/admin/gallery?placement=home|full` lists that collection; `POST` uploads a photo with a matching `placement` field; `PATCH /api/admin/gallery/:id` edits its caption/category or ordering; `DELETE` removes it.
 
 Admin APIs require a valid session or (when configured) `Authorization: Bearer <ADMIN_API_KEY>`. Public enquiry submissions never reserve dates.
 

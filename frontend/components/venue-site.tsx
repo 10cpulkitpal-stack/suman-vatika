@@ -150,6 +150,7 @@ function SpacesSection() {
 }
 
 function GallerySection({ standalone = false }: { standalone?: boolean }) {
+  const placement = standalone ? 'full' : 'home'
   const [images, setImages] = useState(defaultVenueImages)
   const [filter, setFilter] = useState('All moments')
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -159,7 +160,7 @@ function GallerySection({ standalone = false }: { standalone?: boolean }) {
   const selectedImage = images.find((image) => image.id === selectedId) ?? null
   useEffect(() => {
     let active = true
-    apiFetch('/api/gallery', { cache: 'no-store' })
+    apiFetch(`/api/gallery?placement=${placement}`, { cache: 'no-store' })
       .then(async (response) => {
         if (!response.ok) return
         const result = await response.json() as { images?: VenueImage[] }
@@ -168,7 +169,7 @@ function GallerySection({ standalone = false }: { standalone?: boolean }) {
       })
       .catch(() => {})
     return () => { active = false }
-  }, [])
+  }, [placement])
   const moveImage = (direction: number) => {
     if (!selectedImage || !images.length) return
     const index = images.findIndex((image) => image.id === selectedImage.id)

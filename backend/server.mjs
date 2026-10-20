@@ -177,7 +177,9 @@ const server = createServer(async (request, response) => {
 
     if (pathname === '/api/gallery' && request.method === 'GET') {
       await initializeDatabase()
-      const images = await query('SELECT id, src, category, label, sort_order FROM gallery_images ORDER BY sort_order, created_at')
+      const placement = searchParams.get('placement') ?? 'full'
+      if (!['home', 'full'].includes(placement)) { send(response, 400, { error: 'Gallery placement must be home or full.' }); return }
+      const images = await query(`SELECT id, src, category, label, sort_order FROM gallery_images WHERE placement = ${dialect === 'postgres' ? '$1' : '?'} ORDER BY sort_order, created_at`, [placement])
       const apiOrigin = (process.env.PUBLIC_API_URL ?? `http://localhost:${port}`).replace(/\/+$/, '')
       send(response, 200, { images: images.map((image) => ({ ...image, src: image.src.startsWith('/media/') ? `${apiOrigin}${image.src}` : image.src })) })
       return
@@ -341,8 +343,10 @@ const server = createServer(async (request, response) => {
 
     if (pathname === '/api/admin/gallery' && request.method === 'GET') {
       await initializeDatabase()
+      const placement = searchParams.get('placement') ?? 'full'
+      if (!['home', 'full'].includes(placement)) { send(response, 400, { error: 'Gallery placement must be home or full.' }); return }
       const apiOrigin = (process.env.PUBLIC_API_URL ?? `http://localhost:${port}`).replace(/\/+$/, '')
-      const images = await query('SELECT id, src, category, label, sort_order FROM gallery_images ORDER BY sort_order, created_at')
+      const images = await query(`SELECT id, src, category, label, sort_order FROM gallery_images WHERE placement = ${dialect === 'postgres' ? '$1' : '?'} ORDER BY sort_order, created_at`, [placement])
       send(response, 200, { images: images.map((image) => ({ ...image, src: image.src.startsWith('/media/') ? `${apiOrigin}${image.src}` : image.src })) })
       return
     }
@@ -351,21 +355,22 @@ const server = createServer(async (request, response) => {
       const { fields, image } = await readGalleryUpload(request)
       const category = typeof fields.category === 'string' ? fields.category.trim().slice(0, 40) : ''
       const label = typeof fields.label === 'string' ? fields.label.trim().slice(0, 120) : ''
+      const placement = typeof fields.placement === 'string' ? fields.placement : ''
       if (!image?.data.length || !image.filename) { send(response, 400, { error: 'Choose an image to upload.' }); return }
       if (image.data.length > 8 * 1024 * 1024) { send(response, 413, { error: 'Image upload is too large. Maximum size is 8 MB.' }); return }
       if (!imageTypes.has(image.type)) { send(response, 400, { error: 'Use a JPG, PNG, WebP, or AVIF image.' }); return }
       if (!validImageContent(image)) { send(response, 400, { error: 'The selected file does not match its image format.' }); return }
-      if (!category || !label) { send(response, 400, { error: 'Add a category and image caption.' }); return }
+      if (!category || !label || !['home', 'full'].includes(placement)) { send(response, 400, { error: 'Add a category, image caption, and valid gallery placement.' }); return }
       await initializeDatabase()
       await mkdir(galleryDirectory, { recursive: true })
       const id = randomUUID()
       const src = `/media/gallery/${id}${imageTypes.get(image.type)}`
       await writeFile(resolve(galleryDirectory, `${id}${imageTypes.get(image.type)}`), image.data, { flag: 'wx' })
-      const latest = await query('SELECT MAX(sort_order) AS max_order FROM gallery_images')
+      const latest = await query(`SELECT MAX(sort_order) AS max_order FROM gallery_images WHERE placement = ${dialect === 'postgres' ? '$1' : '?'}`, [placement])
       const sortOrder = Number(latest[0]?.max_order ?? -1) + 1
       const createdAt = new Date().toISOString()
-      await query(`INSERT INTO gallery_images (id, src, category, label, sort_order, created_at) VALUES (${placeholders(6)})`, [id, src, category, label, sortOrder, createdAt])
-      send(response, 201, { image: { id, src: `${(process.env.PUBLIC_API_URL ?? `http://localhost:${port}`).replace(/\/+$/, '')}${src}`, category, label, sort_order: sortOrder } })
+      await query(`INSERT INTO gallery_images (id, src, category, label, sort_order, placement, created_at) VALUES (${placeholders(7)})`, [id, src, category, label, sortOrder, placement, createdAt])
+      send(response, 201, { image: { id, src: `${(process.env.PUBLIC_API_URL ?? `http://localhost:${port}`).replace(/\/+$/, '')}${src}`, category, label, sort_order: sortOrder, placement } })
       return
     }
 
@@ -395,7 +400,10 @@ const server = createServer(async (request, response) => {
       const rows = await query(`DELETE FROM gallery_images WHERE id = ${dialect === 'postgres' ? '$1' : '?'} RETURNING id, src`, [id])
       if (!rows.length) { send(response, 404, { error: 'Gallery image not found.' }); return }
       const localFile = rows[0].src.match(/^\/media\/gallery\/([a-f0-9-]+\.(?:jpg|png|webp|avif))$/i)?.[1]
-      if (localFile) await unlink(resolve(galleryDirectory, localFile)).catch(() => {})
+      if (localFile) {
+        const references = await query(`SELECT id FROM gallery_images WHERE src = ${dialect === 'postgres' ? '$1' : '?'}`, [rows[0].src])
+        if (!references.length) await unlink(resolve(galleryDirectory, localFile)).catch(() => {})
+      }
       send(response, 200, { id, deleted: true })
       return
     }

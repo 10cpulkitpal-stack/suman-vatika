@@ -9,6 +9,52 @@ type GalleryImage = { id: string; src: string; category: string; label: string; 
 const apiOrigin = process.env.NODE_ENV === 'production' ? '' : (process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000').replace(/\/+$/, '')
 const categories = ['Mandap', 'The lawn', 'The grand hall', 'Celebrations']
 
+// Vercel rejects request bodies over ~4.5 MB (HTTP 413), so larger photos are resized in the browser first.
+const directUploadLimit = 3 * 1024 * 1024
+const uploadTarget = 3.5 * 1024 * 1024
+const tooLargeMessage = 'This photo is too large to upload. Please choose a smaller one.'
+
+function canvasToBlob(canvas: HTMLCanvasElement, quality: number): Promise<Blob | null> {
+  return new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality))
+}
+
+async function prepareImage(file: File): Promise<File> {
+  if (file.size <= directUploadLimit) return file
+
+  let bitmap: ImageBitmap
+  try {
+    bitmap = await createImageBitmap(file)
+  } catch {
+    throw new Error('Could not read this photo. Try a JPG or PNG.')
+  }
+
+  try {
+    let scale = Math.min(1, 2400 / Math.max(bitmap.width, bitmap.height))
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale))
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale))
+      const context = canvas.getContext('2d')
+      if (!context) break
+      context.fillStyle = 'white'
+      context.fillRect(0, 0, canvas.width, canvas.height)
+      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+
+      for (const quality of [0.88, 0.78, 0.68]) {
+        const blob = await canvasToBlob(canvas, quality)
+        if (blob && blob.size <= uploadTarget) {
+          return new File([blob], `${file.name.replace(/\.[^.]+$/, '')}.jpg`, { type: 'image/jpeg' })
+        }
+      }
+      scale *= 0.8
+    }
+  } finally {
+    bitmap.close()
+  }
+
+  throw new Error(tooLargeMessage)
+}
+
 export default function GalleryAdmin() {
   const [authenticated, setAuthenticated] = useState<boolean | null>(null)
   const [placement, setPlacement] = useState<'home' | 'full'>('home')
@@ -46,15 +92,15 @@ export default function GalleryAdmin() {
     const formElement = event.currentTarget
     if (!file) { setError('Choose a photo to upload.'); return }
     setBusy(true); setError(''); setMessage('')
-    const form = new FormData()
-    form.set('image', file)
-    form.set('category', category)
-    form.set('label', label)
-    form.set('placement', placement)
     try {
+      const form = new FormData()
+      form.set('image', await prepareImage(file))
+      form.set('category', category)
+      form.set('label', label)
+      form.set('placement', placement)
       const response = await apiFetch('/api/admin/gallery', { method: 'POST', body: form })
-      const result = await response.json() as { error?: string }
-      if (!response.ok) throw new Error(result.error || 'Could not upload the image.')
+      const result = await response.json().catch(() => ({})) as { error?: string }
+      if (!response.ok) throw new Error(response.status === 413 ? tooLargeMessage : result.error || 'Could not upload the image.')
       await load(); setFile(null); setLabel(''); formElement.reset(); setMessage('Image added to the gallery.')
     } catch (uploadError) { setError(uploadError instanceof Error ? uploadError.message : 'Could not upload the image.') }
     finally { setBusy(false) }
@@ -110,7 +156,7 @@ export default function GalleryAdmin() {
 
   return <main className="admin-page"><header className="admin-header"><Link className="brand-mark" href="/"><span className="brand-symbol">S<span>V</span></span><span className="brand-wordmark"><strong>Suman Vatika</strong><small>PRIVATE VENUE DESK</small></span></Link><div className="admin-header-actions"><span className="admin-secure-label"><ShieldCheck size={15} /> Private</span><button className="admin-quiet-button" type="button" onClick={signOut}><LogOut size={15} /> Sign out</button></div></header><section className="admin-content gallery-admin-content"><Link className="gallery-admin-back" href="/admin"><ArrowLeft size={15} /> Back to enquiries</Link><div className="admin-heading"><div><span className="eyebrow"><i /> WEBSITE CONTENT</span><h1>{placement === 'home' ? <>Homepage <em>preview.</em></> : <>Full gallery <em>page.</em></>}</h1><p>Manage the {placement === 'home' ? 'homepage gallery preview' : 'full gallery page'} independently.</p></div><span className="gallery-admin-count">{images.length} photos</span></div>{error && <p className="form-error admin-error" role="alert">{error}</p>}{message && <p className="gallery-admin-message" role="status">{message}</p>}
     <div className="gallery-placement-tabs" role="tablist" aria-label="Gallery placement"><button type="button" role="tab" aria-selected={placement === 'home'} className={placement === 'home' ? 'active' : ''} onClick={() => { setPlacement('home'); setEditing(null); setError(''); setMessage('') }}>Homepage preview</button><button type="button" role="tab" aria-selected={placement === 'full'} className={placement === 'full' ? 'active' : ''} onClick={() => { setPlacement('full'); setEditing(null); setError(''); setMessage('') }}>Full gallery page</button></div><p className="gallery-placement-help">Photos, captions, categories, and order are saved separately for each area of the site.</p>
-    <form className="gallery-upload-panel" onSubmit={upload}><div><span className="eyebrow"><i /> ADD A PHOTO</span><h2>Make room for another <em>moment.</em></h2><p>JPG, PNG, WebP, or AVIF · up to 8 MB each.</p></div><label>Choose photo<input type="file" accept="image/jpeg,image/png,image/webp,image/avif" onChange={(event) => setFile(event.target.files?.[0] ?? null)} required /></label><div className="gallery-upload-fields"><label>Category<select value={category} onChange={(event) => setCategory(event.target.value)}>{categories.map((item) => <option key={item}>{item}</option>)}</select></label><label>Caption<input value={label} onChange={(event) => setLabel(event.target.value)} maxLength={120} placeholder="A short description" required /></label><button className="button button-maroon" type="submit" disabled={busy}><ImagePlus size={16} /> {busy ? 'Saving…' : 'Add to gallery'}</button></div></form>
+    <form className="gallery-upload-panel" onSubmit={upload}><div><span className="eyebrow"><i /> ADD A PHOTO</span><h2>Make room for another <em>moment.</em></h2><p>JPG, PNG, WebP, or AVIF · large photos are resized automatically.</p></div><label>Choose photo<input type="file" accept="image/jpeg,image/png,image/webp,image/avif" onChange={(event) => setFile(event.target.files?.[0] ?? null)} required /></label><div className="gallery-upload-fields"><label>Category<select value={category} onChange={(event) => setCategory(event.target.value)}>{categories.map((item) => <option key={item}>{item}</option>)}</select></label><label>Caption<input value={label} onChange={(event) => setLabel(event.target.value)} maxLength={120} placeholder="A short description" required /></label><button className="button button-maroon" type="submit" disabled={busy}><ImagePlus size={16} /> {busy ? 'Saving…' : 'Add to gallery'}</button></div></form>
     <div className="gallery-admin-list-heading"><div><h2>Current photos</h2><span>Changes apply to the {placement === 'home' ? 'homepage preview' : 'full gallery page'} only.</span></div></div>{images.length ? <div className="gallery-admin-grid">{images.map((image, index) => <article className="gallery-admin-card" key={image.id}><div className="gallery-admin-preview"><img src={image.src} alt={image.label} /><span>{image.category}</span><div className="gallery-order-controls"><button type="button" aria-label="Move image up" disabled={busy || index === 0} onClick={() => move(image, -1)}><ArrowUp size={15} /></button><button type="button" aria-label="Move image down" disabled={busy || index === images.length - 1} onClick={() => move(image, 1)}><ArrowDown size={15} /></button></div></div>{editing === image.id ? <form className="gallery-edit-form" onSubmit={(event) => saveDetails(event, image)}><label>Category<select name="category" defaultValue={image.category}>{categories.map((item) => <option key={item}>{item}</option>)}{!categories.includes(image.category) && <option>{image.category}</option>}</select></label><label>Caption<input name="label" defaultValue={image.label} maxLength={120} required /></label><div><button type="submit" disabled={busy}><Save size={14} /> Save</button><button type="button" onClick={() => setEditing(null)}><X size={14} /> Cancel</button></div></form> : <div className="gallery-admin-card-caption"><div><strong>{image.label}</strong><span>{image.category}</span></div><div className="gallery-admin-card-actions"><button type="button" disabled={busy} onClick={() => setEditing(image.id)} aria-label={`Edit ${image.label}`}><Pencil size={15} /></button><button type="button" disabled={busy} onClick={() => remove(image)} aria-label={`Remove ${image.label}`}><Trash2 size={15} /></button></div></div>}</article>)}</div> : <div className="admin-empty"><div><ImagePlus size={23} /></div><h3>No gallery photos yet.</h3><p>Upload a photo above and it will appear on the website.</p></div>}
   </section></main>
 }

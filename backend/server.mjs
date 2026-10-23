@@ -472,3 +472,16 @@ server.listen(port, host, () => {
     console.warn('Admin sign-in is disabled until ADMIN_PASSWORD and a 32+ character ADMIN_SESSION_SECRET are configured.')
   }
 })
+
+if (process.env.NODE_ENV === 'production' && process.env.RENDER_EXTERNAL_URL) {
+  const keepAliveInterval = setInterval(async () => {
+    try {
+      const response = await fetch(`${process.env.RENDER_EXTERNAL_URL}/health`, { signal: AbortSignal.timeout(10_000) })
+      if (!response.ok) console.warn('Keep-alive ping failed with status:', response.status)
+    } catch (error) {
+      console.warn('Keep-alive ping failed:', error.message)
+    }
+  }, 5 * 60 * 1000)
+  keepAliveInterval.unref()
+}
+
